@@ -1,117 +1,150 @@
-import os
-import argparse
-import torch
-from networks.unet2d import Unet2D
-from utils.util import _eval_dice, _eval_haus, _connectivity_region_analysis, parse_fn_haus
 import numpy as np
-from glob import glob
+import torch
+from torchvision import transforms
+from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
+from networks.unet2d import Unet2D
+from utils.util import _connectivity_region_analysis
+import cv2
+import os
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--root_path', type=str, default='', help='Name of Experiment')
-parser.add_argument('--model', type=str,  default='', help='model_name')
-parser.add_argument('--method', type=str,  default='', help='model_name')
-parser.add_argument('--batch_size', type=int,  default=4, help='model_name')
-parser.add_argument('--client_num', type=int,  default=4, help='model_name')
-parser.add_argument('--gpu', type=str,  default='0', help='GPU to use')
-parser.add_argument('--unseen_site', type=int,  default=3, help='GPU to use')
-parser.add_argument('--model_idx', type=int,  default=85, help='GPU to use')
-FLAGS = parser.parse_args()
-
-os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu
-model_path = "../output/"+FLAGS.model+"/"
-snapshot_path = "../output/"+FLAGS.method+"/"
-
-args = parser.parse_args()
-batch_size = args.batch_size * len(args.gpu.split(','))
-volume_size = [384, 384, 1]
-num_classes = 2
-client_num = args.client_num
-
-client_name = ['Site1', 'Site2', 'Site3', 'Site4']
-
-client_data_list = []
-for client_idx in range(client_num):
-    client_data_list.append(glob(' '.format(client_name[client_idx])))
-    print (len(client_data_list[client_idx]))
-
-unseen_site_idx = args.unseen_site
-source_site_idx = [0, 1, 2, 3]
-
-result_dir = snapshot_path + '/prediction/'
-if not os.path.exists(result_dir):
-    os.makedirs(result_dir)
-
-def _save_image(img, gth, pred, out_folder, out_name):
-
-    np.save(out_folder+'/'+out_name+'_img.npy',img)
-    np.save(out_folder+'/'+out_name+'_pred.npy',pred)
-    np.save(out_folder+'/'+out_name+'_gth.npy',gth)
-
-    return 0
-
-def test(site_index, test_net_idx):
-    
-    test_net = Unet2D()
-    test_net = test_net.cuda()
-
-    save_mode_path = os.path.join(model_path + '/model', 'epoch_' + str(test_net_idx) + '.pth')
-    test_net.load_state_dict(torch.load(save_mode_path))
-    test_net.train()
-
-    test_data_list = client_data_list[site_index]
-
-    dice_array = []
-    haus_array = []
-
-    for fid, filename in enumerate(test_data_list):
-        print(filename)
-        data = np.load(filename)
-        image = data[..., :3]
-        mask = data[..., 3:]
-        mask = np.expand_dims(mask.transpose(2, 0, 1), axis=0)
+def find_contour_points(binary_mask):
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        contour_points = np.vstack([c.squeeze() for c in contours])  # Changed to list comprehension
+    else:
+        contour_points = np.array([])  # Return empty array if no contours found
+    return contour_points, contours
 
 
-        image_test = np.expand_dims(image.transpose(2, 0, 1), axis=0)
+def _eval_dice(gt_y, pred_y, detail=False):
+    class_map = {  # a map used for mapping label value to its name, used for output
+        "0": "disk",
+        "1": "cup"
+    }
+    dice = []
+    for cls in range(0, 2):
+        gt = gt_y[:, cls, ...]
+        pred = pred_y[:, cls, ...]
+        dice_this = 2 * np.sum(gt * pred) / (np.sum(gt) + np.sum(pred))
+        dice.append(dice_this)
+    return dice
 
-        image_test = torch.from_numpy(image_test).float()
 
-        logit, pred, _ = test_net(image_test)
+# 设定设备
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# 加载模型
+state_dict = torch.load(r'F:\PR\signal_domian\SETA\epoch_53.pth')
+model = Unet2D()
+model.load_state_dict(state_dict)
+model = model.to(device)  # 使用统一的设备变量
+model.eval()
+
+import os
+
+img_dir = r'C:\Users\DIY\Desktop\Fundus-doFE\Fundus\Domain2\train\ROIs\image'
+save_path = './'
+os.makedirs(save_path, exist_ok=True)
+
+dice_array = []
+
+for img_name in os.listdir(img_dir):
+    image_path = os.path.join(img_dir, img_name)
+    mask_path = image_path.replace('image', 'mask')
+
+    img = cv2.imread(str(image_path))
+    mask = cv2.imread(str(mask_path))
+
+    img = np.asarray(img, np.float32)
+    mask = np.asarray(mask, np.float32)
+
+    if mask.ndim == 3:  # expanda dimension for concatenate
+        mask = np.mean(mask, axis=2)
+
+    mask = 2 - np.array(mask / 127, dtype='uint8')
+    disc = (mask > 0).astype('uint8')
+    cup = (mask > 1).astype('uint8')
+
+    img = cv2.resize(img, (384, 384))
+    ori_img = img.copy()
+    ori_img_mask = img.copy()
+
+    mask = cv2.resize(mask, (384, 384))
+    image = np.expand_dims(img.transpose(2, 0, 1), axis=0)
+    image = torch.from_numpy(image).float().to(device)
+
+    disc = cv2.resize(disc, (384, 384))
+    cup = cv2.resize(cup, (384, 384))
+
+    disc = disc[..., np.newaxis]
+    cup = cup[..., np.newaxis]
+
+    data = np.concatenate((img, disc, cup), axis=2)
+    mask_dice = np.expand_dims(data[..., 3:].transpose(2, 0, 1), axis=0)
+
+    with torch.no_grad():
+        pred = model(image)
         pred_y = pred.cpu().detach().numpy()
-        pred_y[pred_y>0.75] = 1
-        pred_y[pred_y<0.75] = 0
+
+        pred_y[pred_y > 0.75] = 1
+        pred_y[pred_y < 0.75] = 0
 
         pred_y_0 = pred_y[:, 0:1, ...]
         pred_y_1 = pred_y[:, 1:, ...]
+
         processed_pred_y_0 = _connectivity_region_analysis(pred_y_0)
         processed_pred_y_1 = _connectivity_region_analysis(pred_y_1)
+
         processed_pred_y = np.concatenate([processed_pred_y_0, processed_pred_y_1], axis=1)
-        dice_subject = _eval_dice(mask, processed_pred_y)
-        haus_subject = _eval_haus(mask, processed_pred_y)
-        dice_array.append(dice_subject)
-        haus_array.append(haus_subject)
+        dice_subject = _eval_dice(mask_dice, processed_pred_y)
+        dice_array.extend(dice_subject)
 
-        _save_image(image.transpose(2, 0, 1), mask[0], pred_y[0], result_dir, out_name=str(site_index)+'_'+os.path.basename(filename))
-    dice_array = np.array(dice_array)
-    haus_array = np.array(haus_array)
+        processed_pred_y = processed_pred_y_0 + processed_pred_y_1
+        results = processed_pred_y[0]
+        results = results.transpose(1, 2, 0)[:, :, 0]
 
-    dice_avg = np.mean(dice_array, axis=0).tolist()
-    haus_avg = np.mean(haus_array, axis=0).tolist()
+        cup = results.copy()
+        cup_mask = mask.copy()
+        cup[cup >= 1] = 255
+        cup_mask[cup_mask >= 1] = 255
 
-    return dice_avg, dice_array, haus_avg, haus_array
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_cup.jpg'), cup)
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_cup_mask.jpg'), cup_mask)
 
-if __name__ == '__main__':
-    test_net_idx = args.model_idx
+        _, u1 = find_contour_points(cup.astype(np.uint8))
+        _, v1 = find_contour_points(cup_mask.astype(np.uint8))
 
-    with open(os.path.join(snapshot_path, 'testing_result.txt'), 'a') as f:
+        ori_img = cv2.drawContours(ori_img, u1, -1, (255, 255, 255), 2)
+        ori_img_mask = cv2.drawContours(ori_img_mask, v1, -1, (255, 255, 255), 2)
 
+        disc = results.copy()
+        disc_mask = mask.copy()
+        disc[disc == 2] = 255
+        disc[disc != 255] = 0
+        disc_mask[disc_mask == 2] = 255
+        disc_mask[disc_mask != 255] = 0
 
-            dice_list = []
-            haus_list = []
-            print("epoch {} testing ".format(test_net_idx))
-            dice, dice_array, haus, haus_array = test(unseen_site_idx, test_net_idx)
-            print(("   OD dice is: {}, std is {}, array is {}".format(dice[0], np.std(dice_array[:, 0]), dice_array[:, 0])), file=f)
-            print(("      {}".format(dice_array[:, 0])), file=f)
-            print(("   OC dice is: {}, std is {}, array is {}".format(dice[1], np.std(dice_array[:, 1]), dice_array[:, 1])), file=f)
-            print(("      {}".format(dice_array[:, 1])), file=f)
-            print ((dice[0]+dice[1])/2)
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_disc.jpg'), disc)
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_disc_mask.jpg'), disc_mask)
+
+        _, u1 = find_contour_points(disc.astype(np.uint8))
+        _, v1 = find_contour_points(disc_mask.astype(np.uint8))
+
+        ori_img = cv2.drawContours(ori_img, u1, -1, (0, 255, 255), 2)
+        ori_img_mask = cv2.drawContours(ori_img_mask, v1, -1, (0, 255, 255), 2)
+
+        if 0 == np.count_nonzero(disc):
+            disc[0, 0] = 255
+
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_img.jpg'), ori_img)
+        cv2.imwrite(os.path.join(save_path, img_name[:-4] + '_mask.jpg'), ori_img_mask)
+
+dice_array = np.array(dice_array)
+dice_avg = np.mean(dice_array, axis=0).tolist()
+dice_avg2 = np.std(dice_array, axis=0).tolist()
+
+print(dice_avg)
+print(dice_avg2)
