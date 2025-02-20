@@ -1,6 +1,6 @@
 1. Prepare the dataset, data_preprocessing.py:
 
-2. Organize the data (save the data as npy to speed up federated training) and amplitude spectrum of local clients as following structure:
+2. Organize the data (save the data as npy to speed up federated training) and amplitude spectrum of local clients:
 
 3. Train the federated learning model :
    ```shell
