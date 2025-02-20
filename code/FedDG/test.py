@@ -33,10 +33,9 @@ def _eval_dice(gt_y, pred_y, detail=False):
     return dice
 
 
-# 设定设备
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# 加载模型
 state_dict = torch.load(r'F:\PR\signal_domian\SETA\epoch_53.pth')
 model = Unet2D()
 model.load_state_dict(state_dict)
