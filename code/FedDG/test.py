@@ -36,10 +36,10 @@ def _eval_dice(gt_y, pred_y, detail=False):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-state_dict = torch.load(r'F:\PR\signal_domian\SETA\epoch_53.pth')
+state_dict = torch.load(r' ')
 model = Unet2D()
 model.load_state_dict(state_dict)
-model = model.to(device)  # 使用统一的设备变量
+model = model.to(device) 
 model.eval()
 
 import os
