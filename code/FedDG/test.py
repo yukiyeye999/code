@@ -5,8 +5,7 @@ from networks.unet2d import Unet2D
 from utils.util import _eval_dice, _eval_haus, _connectivity_region_analysis, parse_fn_haus
 import numpy as np
 from glob import glob
-import logging
-# from test_util import test_all_case
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root_path', type=str, default='', help='Name of Experiment')
@@ -33,7 +32,7 @@ client_name = ['Site1', 'Site2', 'Site3', 'Site4']
 
 client_data_list = []
 for client_idx in range(client_num):
-    client_data_list.append(glob('/research/pheng4/qdliu/dataset/Fundus/{}/processed/npy/*'.format(client_name[client_idx])))
+    client_data_list.append(glob(' '.format(client_name[client_idx])))
     print (len(client_data_list[client_idx]))
 
 unseen_site_idx = args.unseen_site
@@ -105,7 +104,6 @@ if __name__ == '__main__':
     test_net_idx = args.model_idx
 
     with open(os.path.join(snapshot_path, 'testing_result.txt'), 'a') as f:
-        # for test_net_idx in range(10,11):
 
 
             dice_list = []
